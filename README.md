@@ -44,16 +44,31 @@ anywhere in the command:
 
 | Kind | Examples |
 |---|---|
-| timeout | `timeout 60`, `gtimeout 60`, with options such as `-k 5` or `--signal=KILL` |
+| timeout | `timeout 60`, `gtimeout 60`, with options such as `-k 5`, `-s KILL` or `--signal=KILL` |
 | clock | `SECONDS`, `date +%s` |
 | counter | `((i++))`, `((i+=1))`, `i=$((i+1))`, `let c=c+1` |
 | named limit | `deadline`, `max_tries` (any case), or an upper-case variable starting with `MAX` or `LIMIT`, such as `MAX_WAIT` |
 
 These also pass: `while read ...` loops (they stop when the input ends), `for` loops,
 Python `while` loops, commands without a loop, and any command that contains the comment
-`# no-deadline-ok`.
+`# no-deadline-ok`. A `while read` loop is still checked when `||` keeps its condition
+true, as in `while read -r x || true`, except for the common last-line form
+`while read -r x || [ -n "$x" ]`, and only when `$x` is a variable that the same `read`
+fills. `until read` loops are always checked, because at the
+end of the input they never stop.
 
-Loops inside quotes, such as `bash -c 'until [ -f done ]; do sleep 1; done'`, are checked too.
+Loops inside quotes, such as `bash -c 'until [ -f done ]; do sleep 1; done'`, are checked
+too, and so are loops nested inside other loops, loops in `case` arms, and negated loops
+(`! while ...`).
+
+Heredoc bodies are treated as text and skipped, so writing a shell example to a file with
+`cat <<EOF` passes. Two cases are still checked, because that text runs:
+
+- A heredoc on a line that also names a shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `ash`,
+  `ssh`, `source`, `eval`), before or after the `<<`. Examples: `env bash <<EOF`,
+  `cat <<'EOF' | sh`.
+- `$(...)` and backtick parts of an unquoted heredoc (`<<EOF`, not `<<'EOF'`), because the
+  shell runs them before the command reads the text.
 
 ## Configuration
 
@@ -67,7 +82,8 @@ suggested to Claude; the hook does not need it.
 ## How it works
 
 `hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool. The Python script
-finds `until`/`while ... do` loops with a regular expression, skips `while read` loops, and
+blanks out heredoc bodies that don't feed a shell, finds `until`/`while ... do` loops in
+one pass over the command (fast enough for very long commands), skips `while read` loops, and
 looks for any deadline pattern in the whole command. If it finds a loop and no deadline, it
 returns `permissionDecision: "deny"` with the message above. Input it can't parse, and calls
 to other tools, pass through untouched.
@@ -89,6 +105,10 @@ python3 tests/test_guard.py
 - It is a pattern check, not a shell parser. A deadline anywhere in the command counts for
   every loop in it, so `while true; do sleep 1; done; timeout 5 true` passes.
 - It checks that a counter exists, not that the loop uses it to stop.
+- A heredoc line that names a shell for another reason, such as `cat <<EOF > x; bash x`,
+  has its body checked too.
+- Text it can't tell apart from code still counts as code. A loop inside an `echo` string
+  or a here-string (`<<<`) is checked, and can be refused, even though it never runs.
 - Tested on macOS in the terminal CLI (Claude Code 2.1.319). The docs say desktop app
   local sessions load plugins too, but I have not tested it there, or on Linux or Windows.
 

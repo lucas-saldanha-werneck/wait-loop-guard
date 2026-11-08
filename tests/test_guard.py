@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "wait_loop_guard.py")
@@ -14,7 +15,7 @@ HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "
 
 def run(payload):
     raw = payload if isinstance(payload, str) else json.dumps(payload)
-    r = subprocess.run([sys.executable, "-I", HOOK], input=raw, capture_output=True, text=True, timeout=10)
+    r = subprocess.run([sys.executable, "-I", HOOK], input=raw, capture_output=True, text=True, timeout=30)
     return r.returncode, r.stdout
 
 
@@ -44,6 +45,30 @@ BLOCKED = [
     "while read -r l; do :; done < f; until [ -f x ]; do sleep 1; done",  # read loop + a wait loop
 ]
 
+# Audit findings (0.1.1): each of these passed the 0.1.0 hook.
+BLOCKED_AUDIT = [
+    "until read -r x; do sleep 1; done < /dev/null",          # EOF keeps `until read` going
+    "while read -r x || true; do sleep 1; done < /dev/null",  # `|| true` keeps it going
+    "while read -r line; do until [ -f x ]; do sleep 1; done; done < files",  # nested right after do
+    "while read -r x; do while true; do sleep 1; done; done < input.txt",
+    "! while true; do sleep 1; done",                          # negated loop
+    "bash <<EOF\nuntil [ -f ready ]; do sleep 1; done\nEOF",  # heredoc fed to a shell runs
+]
+
+# Round-2 review findings (0.1.2): each of these passed the 0.1.1 hook.
+BLOCKED_REVIEW2 = [
+    "cat <<EOF\n$(until false; do sleep 1; done)\nEOF",          # substitution in an unquoted heredoc runs
+    "cat <<EOF\n`while true; do sleep 1; done`\nEOF",
+    "cat <<EOF\nstart $(\nuntil false; do sleep 1; done\n) end\nEOF",  # substitution over several lines
+    "env bash <<EOF\nuntil false; do sleep 1; done\nEOF",        # shell behind a wrapper
+    "FOO=1 sudo -u app sh <<'EOF'\nwhile true; do sleep 1; done\nEOF",
+    "cat <<'EOF' | bash\nwhile true; do sleep 1; done\nEOF",     # heredoc piped into a shell
+    'x=1; while read -r line || [ -n "$x" ]; do sleep 1; done < /dev/null',  # tested variable is not the read one
+    'while read -r a || [ -n "$b" ]; do :; done < f',
+    "case x in x) while true; do sleep 1; done;; esac",             # loop in a case arm
+    "case $1 in\n  start) until [ -f ready ]; do sleep 1; done ;;\nesac",
+]
+
 ALLOWED = [
     "timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'",
     "/usr/bin/timeout 60 bash -c 'while true; do sleep 1; done'",
@@ -60,11 +85,30 @@ ALLOWED = [
     "while read -r line; do echo \"$line\"; done < file.txt",
     "cat list | while IFS= read -r f; do wc -l \"$f\"; done",
     "while IFS=, read -r a b; do echo $a; done < data.csv",
+    "while IFS= read -r l || [ -n \"$l\" ]; do echo \"$l\"; done < f",  # last line without newline
     "until [ -f x ]; do sleep 1; done  # no-deadline-ok",
     "for i in 1 2 3; do echo $i; done",
     "python3 -c 'while True: pass'",
     "git status",
     "",
+]
+
+# Audit findings (0.1.1): each of these was denied by the 0.1.0 hook.
+ALLOWED_AUDIT = [
+    "cat <<EOF\nuntil [ -f ready ]; do sleep 1; done\nEOF",  # heredoc body is only text
+    "cat > notes.md <<'EOF'\n```sh\nwhile true; do sleep 1; done\n```\nEOF\ngit add notes.md",
+    "timeout -s KILL 60 sh -c 'while true; do sleep 1; done'",
+    "timeout --signal KILL 60 sh -c 'until [ -f a ]; do sleep 1; done'",
+]
+
+# Round-2 review: keep these passing.
+ALLOWED_REVIEW2 = [
+    "cat <<'EOF'\n$(until false; do sleep 1; done)\nEOF",      # quoted heredoc: no substitution
+    "cat <<EOF\nwhile true; do sleep 1; done\nbuilt on $(date)\nEOF",  # only the substitution runs
+    'while IFS= read -r -d "" f || [ -n "$f" ]; do echo "$f"; done < list',
+    "while read -r a b || [ -n \"$b\" ]; do echo $a; done < f",
+    "while read || [ -n \"$REPLY\" ]; do echo \"$REPLY\"; done < f",
+    "case $1 in start) echo go ;; esac",
 ]
 
 
@@ -78,6 +122,36 @@ class Guard(unittest.TestCase):
         for cmd in ALLOWED:
             with self.subTest(cmd=cmd):
                 self.assertFalse(denied(cmd), cmd)
+
+    def test_blocked_audit(self):
+        for cmd in BLOCKED_AUDIT:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(denied(cmd), cmd)
+
+    def test_allowed_audit(self):
+        for cmd in ALLOWED_AUDIT:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(denied(cmd), cmd)
+
+    def test_blocked_review2(self):
+        for cmd in BLOCKED_REVIEW2:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(denied(cmd), cmd)
+
+    def test_allowed_review2(self):
+        for cmd in ALLOWED_REVIEW2:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(denied(cmd), cmd)
+
+    def test_large_text_finishes_fast(self):
+        # Review finding: 120 KB of repeated loop keywords took over 6 s, past the 5 s hook timeout.
+        for cmd in ["echo " + "while x " * 15000,
+                    "echo " + "; while x" * 15000 + "; do :; done",
+                    "echo " + ";\n" * 60000 + "do"]:
+            with self.subTest(size=len(cmd)):
+                start = time.monotonic()
+                run(bash(cmd))
+                self.assertLess(time.monotonic() - start, 2.0)
 
     def test_message_examples_pass_the_guard(self):
         _, out = run(bash("until [ -s out.log ]; do sleep 2; done"))
