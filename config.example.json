@@ -1,0 +1,13 @@
+{
+  "_doc": {
+    "about": "Your wait-loop-guard settings. Plugin updates never touch this file. Every value below is the default, so this file changes nothing until you edit it. Each list may also be a single string. The built-in rules always apply; these keys only add to them. Keys that start with _ are ignored.",
+    "escape_words": "Extra escape comments. A command that contains any of them passes, like one with '# no-deadline-ok' (which keeps working). Example: [\"# sem-prazo-ok\"]",
+    "deadline_words": "Extra words that count as a deadline, for example in your language. Each matches as a whole word, in any case. Example: [\"prazo\"]",
+    "deadline_patterns": "Extra deadline patterns as Python regular expressions, matched as written (case-sensitive unless you add (?i)). An invalid one is skipped. Example: [\"\\\\bLIMITE\\\\w*\\\\b\"]",
+    "tip": "A line added at the end of the message Claude sees when a loop is refused. Empty means no extra line."
+  },
+  "escape_words": [],
+  "deadline_words": [],
+  "deadline_patterns": [],
+  "tip": ""
+}

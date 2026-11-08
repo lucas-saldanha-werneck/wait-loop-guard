@@ -78,6 +78,11 @@ Your own settings live outside the plugin, in a file that plugin updates never t
   `XDG_CONFIG_HOME` is set; on Windows `~` is your user folder, `%USERPROFILE%`)
 - or any file named by the environment variable `WAIT_LOOP_GUARD_CONFIG`
 
+You don't have to create it: the first session after you install the plugin creates it for you,
+a copy of [`config.example.json`](config.example.json) with every key at its default (so it
+changes nothing until you edit it) and a `_doc` note on each key. If the file is already there,
+it is never rewritten or changed, not even by an update.
+
 Every key is optional, and each list may also be a single string. A missing or broken file, or a
 value of the wrong type, means the defaults. The built-in rules above always apply; these keys
 only add to them.
@@ -105,7 +110,8 @@ suggested to Claude; the hook does not need it.
 
 ## How it works
 
-`hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool. The Python script
+`hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool, and a `SessionStart` hook
+that only creates your settings file when it is missing. The Python script
 blanks out heredoc bodies that don't feed a shell, finds `until`/`while ... do` loops in
 one pass over the command (fast enough for very long commands), skips `while read` loops, and
 looks for any deadline pattern in the whole command. If it finds a loop and no deadline, it

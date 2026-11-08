@@ -15,6 +15,7 @@ Deliberate escape: put the comment `# no-deadline-ok` in the command.
 Your settings: $XDG_CONFIG_HOME/wait-loop-guard/config.json, or
 ~/.config/wait-loop-guard/config.json, or the file named by WAIT_LOOP_GUARD_CONFIG.
 Plugin updates never touch it. Keys: escape_words, deadline_words, deadline_patterns, tip.
+`--seed` (run at SessionStart) creates that file from config.example.json when it is missing.
 """
 import bisect
 import json
@@ -23,6 +24,8 @@ import re
 import sys
 
 ESCAPE = "no-deadline-ok"
+# Copied to your settings path on the first session when no file is there (see seed_config).
+STARTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.example.json")
 
 # Loop keyword. The condition runs up to the first `;` or newline that is
 # followed by `do` (Python "while x:" has no "do"). Only the keyword is matched
@@ -181,12 +184,15 @@ def find_bad_loops(code):
     return bad
 
 
+def config_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.environ.get("WAIT_LOOP_GUARD_CONFIG") or os.path.join(base, "wait-loop-guard", "config.json")
+
+
 def load_config():
     """Your settings file as a dict; missing, broken or not an object means {}."""
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    path = os.environ.get("WAIT_LOOP_GUARD_CONFIG") or os.path.join(base, "wait-loop-guard", "config.json")
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(config_path(), encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -252,6 +258,38 @@ def main():
     }))
 
 
+def seed_config():
+    """SessionStart: create your settings file from config.example.json when it is missing.
+
+    Never overwrites or changes a file that is there (not even an empty or broken one), and
+    skips a path that is not absolute. Any error just leaves things as they are."""
+    path = config_path()
+    if not os.path.isabs(path) or os.path.lexists(path):
+        return
+    try:
+        with open(STARTER, "rb") as f:
+            data = f.read()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # O_EXCL: if the file shows up meanwhile, this fails instead of overwriting it.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    except OSError:
+        try:
+            os.remove(path)  # the half-written file is ours: remove it so the next run tries again
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--seed"]:
+        try:
+            seed_config()
+        except Exception:
+            pass  # never get in the way of starting a session
+    else:
+        main()
     sys.exit(0)

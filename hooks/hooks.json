@@ -1,5 +1,13 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/wait_loop_guard.py", "--seed"], "timeout": 5 }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
