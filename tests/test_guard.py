@@ -230,6 +230,34 @@ class TestSettings(unittest.TestCase):
                 self.assertIsNotNone(run_with(cfg, LOOP))
         self.assertIsNone(run_with("{not json", "echo hi"))
 
+    def test_file_saved_with_a_bom_is_read(self):
+        # Windows editors (Notepad before 2019, PowerShell 5 Out-File) put a BOM at the start.
+        self.assertIsNone(run_with("﻿" + json.dumps({"escape_words": ["# mine"]}), LOOP + " # mine"))
+
+    def test_escape_words_are_trimmed_like_deadline_words(self):
+        self.assertIsNone(run_with({"escape_words": ["# mine "]}, LOOP + "  # mine"))
+
+    def test_env_var_with_tilde_is_expanded(self):
+        env = clean_env()
+        path = os.path.join(env["HOME"], "dots", "wlg.json")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"escape_words": ["# mine"]}, f)
+        env["WAIT_LOOP_GUARD_CONFIG"] = "~/dots/wlg.json"   # settings.json "env" does not expand ~
+        self.assertEqual(decide(env, LOOP + " # mine"), "")
+
+    def test_relative_paths_never_read_from_the_project(self):
+        # A repo that ships .config/wait-loop-guard/config.json must not turn the guard off.
+        cwd = tempfile.mkdtemp()
+        path = os.path.join(cwd, ".config", "wait-loop-guard", "config.json")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"escape_words": ["until"]}, f)
+        for env in (clean_env(xdg=".config"), clean_env(env_var=os.path.join(".config", "wait-loop-guard", "config.json"))):
+            r = subprocess.run([sys.executable, "-I", os.path.abspath(HOOK)], input=json.dumps(bash(LOOP)),
+                               capture_output=True, text=True, timeout=30, env=env, cwd=cwd)
+            self.assertIn("deny", r.stdout)
+
 
 
 # ---------------------------------------------------------------- first-run settings file

@@ -185,14 +185,18 @@ def find_bad_loops(code):
 
 
 def config_path():
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.environ.get("WAIT_LOOP_GUARD_CONFIG") or os.path.join(base, "wait-loop-guard", "config.json")
+    """WAIT_LOOP_GUARD_CONFIG, else $XDG_CONFIG_HOME/..., else ~/.config/...; `~` is expanded and a
+    relative path is ignored (it would be read from the project folder the session runs in)."""
+    xdg = os.environ.get("XDG_CONFIG_HOME") or ""
+    base = xdg if os.path.isabs(xdg) else os.path.join(os.path.expanduser("~"), ".config")
+    mine = os.path.expanduser(os.environ.get("WAIT_LOOP_GUARD_CONFIG") or "")
+    return mine if os.path.isabs(mine) else os.path.join(base, "wait-loop-guard", "config.json")
 
 
 def load_config():
     """Your settings file as a dict; missing, broken or not an object means {}."""
     try:
-        with open(config_path(), encoding="utf-8") as f:
+        with open(config_path(), encoding="utf-8-sig") as f:  # -sig: a BOM from a Windows editor is fine
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -227,7 +231,7 @@ def main():
     if ESCAPE in cmd:
         return
     cfg = load_config()
-    if any(w in cmd for w in strings(cfg, "escape_words")):
+    if any(w.strip() in cmd for w in strings(cfg, "escape_words")):
         return
 
     bad = find_bad_loops(drop_heredoc_text(cmd))
@@ -261,10 +265,10 @@ def main():
 def seed_config():
     """SessionStart: create your settings file from config.example.json when it is missing.
 
-    Never overwrites or changes a file that is there (not even an empty or broken one), and
-    skips a path that is not absolute. Any error just leaves things as they are."""
+    Never overwrites or changes a file that is there (not even an empty or broken one).
+    Any error just leaves things as they are."""
     path = config_path()
-    if not os.path.isabs(path) or os.path.lexists(path):
+    if os.path.lexists(path):
         return
     try:
         with open(STARTER, "rb") as f:

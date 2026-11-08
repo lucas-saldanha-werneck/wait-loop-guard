@@ -76,7 +76,8 @@ Your own settings live outside the plugin, in a file that plugin updates never t
 
 - `~/.config/wait-loop-guard/config.json` (or `$XDG_CONFIG_HOME/wait-loop-guard/config.json` when
   `XDG_CONFIG_HOME` is set; on Windows `~` is your user folder, `%USERPROFILE%`)
-- or any file named by the environment variable `WAIT_LOOP_GUARD_CONFIG`
+- or any file named by the environment variable `WAIT_LOOP_GUARD_CONFIG` (`~` is expanded; a
+  relative path, here or in `XDG_CONFIG_HOME`, is ignored so a project folder can't supply one)
 
 You don't have to create it: the first session after you install the plugin creates it for you,
 a copy of [`config.example.json`](config.example.json) with every key at its default (so it
