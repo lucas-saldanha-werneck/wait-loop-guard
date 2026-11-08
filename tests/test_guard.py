@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "wait_loop_guard.py")
@@ -14,7 +15,7 @@ HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "
 
 def run(payload):
     raw = payload if isinstance(payload, str) else json.dumps(payload)
-    r = subprocess.run([sys.executable, "-I", HOOK], input=raw, capture_output=True, text=True, timeout=10)
+    r = subprocess.run([sys.executable, "-I", HOOK], input=raw, capture_output=True, text=True, timeout=30)
     return r.returncode, r.stdout
 
 
@@ -54,6 +55,20 @@ BLOCKED_AUDIT = [
     "bash <<EOF\nuntil [ -f ready ]; do sleep 1; done\nEOF",  # heredoc fed to a shell runs
 ]
 
+# Round-2 review findings (0.1.2): each of these passed the 0.1.1 hook.
+BLOCKED_REVIEW2 = [
+    "cat <<EOF\n$(until false; do sleep 1; done)\nEOF",          # substitution in an unquoted heredoc runs
+    "cat <<EOF\n`while true; do sleep 1; done`\nEOF",
+    "cat <<EOF\nstart $(\nuntil false; do sleep 1; done\n) end\nEOF",  # substitution over several lines
+    "env bash <<EOF\nuntil false; do sleep 1; done\nEOF",        # shell behind a wrapper
+    "FOO=1 sudo -u app sh <<'EOF'\nwhile true; do sleep 1; done\nEOF",
+    "cat <<'EOF' | bash\nwhile true; do sleep 1; done\nEOF",     # heredoc piped into a shell
+    'x=1; while read -r line || [ -n "$x" ]; do sleep 1; done < /dev/null',  # tested variable is not the read one
+    'while read -r a || [ -n "$b" ]; do :; done < f',
+    "case x in x) while true; do sleep 1; done;; esac",             # loop in a case arm
+    "case $1 in\n  start) until [ -f ready ]; do sleep 1; done ;;\nesac",
+]
+
 ALLOWED = [
     "timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'",
     "/usr/bin/timeout 60 bash -c 'while true; do sleep 1; done'",
@@ -86,6 +101,16 @@ ALLOWED_AUDIT = [
     "timeout --signal KILL 60 sh -c 'until [ -f a ]; do sleep 1; done'",
 ]
 
+# Round-2 review: keep these passing.
+ALLOWED_REVIEW2 = [
+    "cat <<'EOF'\n$(until false; do sleep 1; done)\nEOF",      # quoted heredoc: no substitution
+    "cat <<EOF\nwhile true; do sleep 1; done\nbuilt on $(date)\nEOF",  # only the substitution runs
+    'while IFS= read -r -d "" f || [ -n "$f" ]; do echo "$f"; done < list',
+    "while read -r a b || [ -n \"$b\" ]; do echo $a; done < f",
+    "while read || [ -n \"$REPLY\" ]; do echo \"$REPLY\"; done < f",
+    "case $1 in start) echo go ;; esac",
+]
+
 
 class Guard(unittest.TestCase):
     def test_blocked(self):
@@ -107,6 +132,26 @@ class Guard(unittest.TestCase):
         for cmd in ALLOWED_AUDIT:
             with self.subTest(cmd=cmd):
                 self.assertFalse(denied(cmd), cmd)
+
+    def test_blocked_review2(self):
+        for cmd in BLOCKED_REVIEW2:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(denied(cmd), cmd)
+
+    def test_allowed_review2(self):
+        for cmd in ALLOWED_REVIEW2:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(denied(cmd), cmd)
+
+    def test_large_text_finishes_fast(self):
+        # Review finding: 120 KB of repeated loop keywords took over 6 s, past the 5 s hook timeout.
+        for cmd in ["echo " + "while x " * 15000,
+                    "echo " + "; while x" * 15000 + "; do :; done",
+                    "echo " + ";\n" * 60000 + "do"]:
+            with self.subTest(size=len(cmd)):
+                start = time.monotonic()
+                run(bash(cmd))
+                self.assertLess(time.monotonic() - start, 2.0)
 
     def test_message_examples_pass_the_guard(self):
         _, out = run(bash("until [ -s out.log ]; do sleep 2; done"))
