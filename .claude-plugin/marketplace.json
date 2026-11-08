@@ -1,0 +1,15 @@
+{
+  "name": "wait-loop-guard",
+  "description": "Refuses Bash until/while wait loops that have no deadline.",
+  "owner": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "plugins": [
+    {
+      "name": "wait-loop-guard",
+      "source": "./",
+      "description": "Refuses Bash until/while wait loops that have no deadline, so Claude can't hang forever polling."
+    }
+  ]
+}

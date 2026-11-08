@@ -1,0 +1,13 @@
+{
+  "name": "wait-loop-guard",
+  "version": "0.1.0",
+  "description": "Refuses Bash until/while wait loops that have no deadline, so Claude can't hang forever polling.",
+  "author": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "homepage": "https://github.com/lucas-saldanha-werneck/wait-loop-guard",
+  "repository": "https://github.com/lucas-saldanha-werneck/wait-loop-guard",
+  "license": "MIT",
+  "keywords": ["hooks", "bash", "timeout", "polling", "guard"]
+}
