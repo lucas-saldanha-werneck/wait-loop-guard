@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -169,6 +170,64 @@ class Guard(unittest.TestCase):
         self.assertEqual(run({"tool_name": "Read", "tool_input": {"file_path": "x"}}), (0, ""))
         self.assertEqual(run("not json"), (0, ""))
         self.assertEqual(run({"tool_name": "Bash"}), (0, ""))
+
+
+LOOP = "until [ -s out.log ]; do sleep 2; done"
+
+
+def run_with(cfg, cmd, env_var=False):
+    """Run the hook with a settings file (in XDG_CONFIG_HOME, or named by WAIT_LOOP_GUARD_CONFIG)."""
+    base = tempfile.mkdtemp()
+    path = os.path.join(base, "wait-loop-guard", "config.json")
+    os.makedirs(os.path.dirname(path))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(cfg if isinstance(cfg, str) else json.dumps(cfg))
+    env = dict(os.environ)
+    env.pop("WAIT_LOOP_GUARD_CONFIG", None)
+    env["HOME"] = env["USERPROFILE"] = tempfile.mkdtemp()
+    if env_var:
+        env["WAIT_LOOP_GUARD_CONFIG"] = path
+        env.pop("XDG_CONFIG_HOME", None)
+    else:
+        env["XDG_CONFIG_HOME"] = base
+    r = subprocess.run([sys.executable, "-I", HOOK], input=json.dumps(bash(cmd)), capture_output=True,
+                       text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if r.stdout.strip() else None
+
+
+class TestSettings(unittest.TestCase):
+    def test_escape_words(self):
+        cfg = {"escape_words": ["# sem-prazo-ok"]}
+        self.assertIsNone(run_with(cfg, LOOP + "  # sem-prazo-ok"))
+        self.assertIsNotNone(run_with(cfg, LOOP))
+        self.assertIsNone(run_with(cfg, LOOP + "  # no-deadline-ok"))  # the built-in word still works
+
+    def test_deadline_words_whole_word_any_case(self):
+        cfg = {"deadline_words": ["prazo"]}
+        self.assertIsNone(run_with(cfg, "PRAZO=60; " + LOOP))
+        self.assertIsNone(run_with(cfg, "prazo=60; " + LOOP))
+        self.assertIsNotNone(run_with(cfg, "aprazovel=1; " + LOOP))
+        self.assertIsNotNone(run_with({}, "prazo=60; " + LOOP))
+
+    def test_deadline_patterns(self):
+        cfg = {"deadline_patterns": [r"\bLIMITE\w*\b", "(unclosed"]}  # a bad regex is skipped
+        self.assertIsNone(run_with(cfg, "LIMITE_SEG=60; " + LOOP))
+        self.assertIsNotNone(run_with(cfg, "limite_seg=60; " + LOOP))  # patterns keep their case
+
+    def test_tip_appended(self):
+        reason = run_with({"tip": "Use /usr/bin/timeout, not gtimeout."}, LOOP)
+        self.assertTrue(reason.endswith("\nUse /usr/bin/timeout, not gtimeout."))
+        self.assertIn("timeout 120", reason)
+
+    def test_config_env_var_path(self):
+        self.assertIsNone(run_with({"escape_words": "# mine"}, LOOP + " # mine", env_var=True))
+
+    def test_broken_or_odd_config_is_ignored(self):
+        for cfg in ["{not json", "[1, 2]", json.dumps({"escape_words": [1, None], "tip": 5, "deadline_words": [""]})]:
+            with self.subTest(cfg=cfg):
+                self.assertIsNotNone(run_with(cfg, LOOP))
+        self.assertIsNone(run_with("{not json", "echo hi"))
 
 
 if __name__ == "__main__":

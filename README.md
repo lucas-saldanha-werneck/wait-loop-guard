@@ -70,9 +70,33 @@ Heredoc bodies are treated as text and skipped, so writing a shell example to a 
 - `$(...)` and backtick parts of an unquoted heredoc (`<<EOF`, not `<<'EOF'`), because the
   shell runs them before the command reads the text.
 
-## Configuration
+## Your settings
 
-None.
+Your own settings live outside the plugin, in a file that plugin updates never touch:
+
+- `~/.config/wait-loop-guard/config.json` (or `$XDG_CONFIG_HOME/wait-loop-guard/config.json` when
+  `XDG_CONFIG_HOME` is set; on Windows `~` is your user folder, `%USERPROFILE%`)
+- or any file named by the environment variable `WAIT_LOOP_GUARD_CONFIG`
+
+Every key is optional, and each list may also be a single string. A missing or broken file, or a
+value of the wrong type, means the defaults. The built-in rules above always apply; these keys
+only add to them.
+
+```json
+{
+  "escape_words": ["# sem-prazo-ok"],
+  "deadline_words": ["prazo"],
+  "deadline_patterns": ["\\bLIMITE\\w*\\b"],
+  "tip": "On macOS use /usr/bin/timeout: Homebrew's gtimeout loses Full Disk Access under launchd."
+}
+```
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| `escape_words` | list of strings | extra escape comments. A command that contains any of them passes, like one with `# no-deadline-ok` (which keeps working) |
+| `deadline_words` | list of strings | extra words that count as a deadline, for example in your language. Each matches as a whole word, in any case |
+| `deadline_patterns` | list of Python regular expressions | extra deadline patterns, matched as written (case-sensitive unless you add `(?i)`). An invalid one is skipped |
+| `tip` | string | a line added at the end of the message Claude sees when a loop is refused |
 
 ## Requirements
 

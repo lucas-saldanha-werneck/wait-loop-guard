@@ -11,9 +11,14 @@ A command passes when it shows some deadline anywhere in it:
 `||` keeps the condition true. Heredoc bodies are skipped unless a shell may run
 them; `$(...)` and backticks in an unquoted heredoc are still checked.
 Deliberate escape: put the comment `# no-deadline-ok` in the command.
+
+Your settings: $XDG_CONFIG_HOME/wait-loop-guard/config.json, or
+~/.config/wait-loop-guard/config.json, or the file named by WAIT_LOOP_GUARD_CONFIG.
+Plugin updates never touch it. Keys: escape_words, deadline_words, deadline_patterns, tip.
 """
 import bisect
 import json
+import os
 import re
 import sys
 
@@ -176,6 +181,35 @@ def find_bad_loops(code):
     return bad
 
 
+def load_config():
+    """Your settings file as a dict; missing, broken or not an object means {}."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    path = os.environ.get("WAIT_LOOP_GUARD_CONFIG") or os.path.join(base, "wait-loop-guard", "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def strings(cfg, key):
+    v = cfg.get(key)
+    v = [v] if isinstance(v, str) else v if isinstance(v, list) else []
+    return [x for x in v if isinstance(x, str) and x.strip()]
+
+
+def extra_deadlines(cfg):
+    """Your deadline_words (whole words, any case) and deadline_patterns (regexes); bad ones skipped."""
+    rxs = [re.compile(r"(?i)(?<!\w)" + re.escape(w.strip()) + r"(?!\w)") for w in strings(cfg, "deadline_words")]
+    for p in strings(cfg, "deadline_patterns"):
+        try:
+            rxs.append(re.compile(p))
+        except re.error:
+            continue
+    return rxs
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -186,9 +220,12 @@ def main():
     cmd = (data.get("tool_input") or {}).get("command") or ""
     if ESCAPE in cmd:
         return
+    cfg = load_config()
+    if any(w in cmd for w in strings(cfg, "escape_words")):
+        return
 
     bad = find_bad_loops(drop_heredoc_text(cmd))
-    if not bad or DEADLINE.search(cmd):
+    if not bad or DEADLINE.search(cmd) or any(rx.search(cmd) for rx in extra_deadlines(cfg)):
         return
 
     reason = (
@@ -203,6 +240,9 @@ def main():
         "for its result. If the loop really ends on its own, add the comment "
         f"`# {ESCAPE}`."
     )
+    tip = cfg.get("tip")
+    if isinstance(tip, str) and tip.strip():
+        reason += "\n" + tip.strip()
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
