@@ -70,9 +70,39 @@ Heredoc bodies are treated as text and skipped, so writing a shell example to a 
 - `$(...)` and backtick parts of an unquoted heredoc (`<<EOF`, not `<<'EOF'`), because the
   shell runs them before the command reads the text.
 
-## Configuration
+## Your settings
 
-None.
+Your own settings live outside the plugin, in a file that plugin updates never touch:
+
+- `~/.config/wait-loop-guard/config.json` (or `$XDG_CONFIG_HOME/wait-loop-guard/config.json` when
+  `XDG_CONFIG_HOME` is set; on Windows `~` is your user folder, `%USERPROFILE%`)
+- or any file named by the environment variable `WAIT_LOOP_GUARD_CONFIG` (`~` is expanded; a
+  relative path, here or in `XDG_CONFIG_HOME`, is ignored so a project folder can't supply one)
+
+You don't have to create it: the first session after you install the plugin creates it for you,
+a copy of [`config.example.json`](config.example.json) with every key at its default (so it
+changes nothing until you edit it) and a `_doc` note on each key. If the file is already there,
+it is never rewritten or changed, not even by an update.
+
+Every key is optional, and each list may also be a single string. A missing or broken file, or a
+value of the wrong type, means the defaults. The built-in rules above always apply; these keys
+only add to them.
+
+```json
+{
+  "escape_words": ["# sem-prazo-ok"],
+  "deadline_words": ["prazo"],
+  "deadline_patterns": ["\\bLIMITE\\w*\\b"],
+  "tip": "On macOS use /usr/bin/timeout: Homebrew's gtimeout loses Full Disk Access under launchd."
+}
+```
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| `escape_words` | list of strings | extra escape comments. A command that contains any of them passes, like one with `# no-deadline-ok` (which keeps working) |
+| `deadline_words` | list of strings | extra words that count as a deadline, for example in your language. Each matches as a whole word, in any case |
+| `deadline_patterns` | list of Python regular expressions | extra deadline patterns, matched as written (case-sensitive unless you add `(?i)`). An invalid one is skipped |
+| `tip` | string | a line added at the end of the message Claude sees when a loop is refused |
 
 ## Requirements
 
@@ -81,7 +111,8 @@ suggested to Claude; the hook does not need it.
 
 ## How it works
 
-`hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool. The Python script
+`hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool, and a `SessionStart` hook
+that only creates your settings file when it is missing. The Python script
 blanks out heredoc bodies that don't feed a shell, finds `until`/`while ... do` loops in
 one pass over the command (fast enough for very long commands), skips `while read` loops, and
 looks for any deadline pattern in the whole command. If it finds a loop and no deadline, it
