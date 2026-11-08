@@ -1,9 +1,7 @@
 # wait-loop-guard
 
-A Claude Code hook that refuses Bash `until`/`while` wait loops that have no deadline, so
-Claude can't hang forever polling for something that never comes.
-
-## Why
+A Claude Code hook that refuses Bash `until`/`while` wait loops with no deadline, so a
+Bash call can't hang forever waiting for something that never happens.
 
 Claude often waits like this:
 
@@ -11,34 +9,22 @@ Claude often waits like this:
 until [ -s out.log ]; do sleep 2; done
 ```
 
-If the previous step failed, `out.log` never appears and the Bash call, or the background task,
-waits forever. This hook stops the command before it runs and tells Claude how to add a limit.
+If the step before it failed, `out.log` never appears and the loop never ends. The hook
+blocks the command before it runs and tells Claude how to add a limit.
 
 ## What Claude sees
 
+The command is not run. Claude gets this tool error instead (copied from a real session):
+
 ```
-wait-loop-guard: wait loop without a deadline (until [ -s out.log ]). Give it a limit, for example:
+PreToolUse:Bash hook error: wait-loop-guard: wait loop without a deadline (until [ -s out.log ]). Give it a limit, for example:
   - timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'
   - a counter: i=0; until [ -s out.log ]; do i=$((i+1)); [ $i -gt 60 ] && break; sleep 2; done
   - elapsed seconds: end=$((SECONDS+120)); until [ -s out.log ] || [ $SECONDS -ge $end ]; do sleep 2; done
-Also check the exit code of the step you are waiting on before waiting for its result. If the
-loop really ends on its own, add the comment `# no-deadline-ok`.
+Also check the exit code of the step you are waiting on before waiting for its result. If the loop really ends on its own, add the comment `# no-deadline-ok`.
 ```
 
-## What passes
-
-A command with an `until`/`while ... do` loop passes when it shows a deadline anywhere in it:
-
-- `timeout N` / `gtimeout N` (options such as `-k 5` or `--signal=KILL` are fine)
-- `SECONDS` or `date +%s`
-- a counter: `((i++))`, `((i+=1))`, `i=$((i+1))`, `let ...`
-- the words `deadline` or `max_tries`, or an upper-case `MAX...` / `LIMIT...` variable
-
-Also allowed: `while read ...` loops (they end when their input ends), `for` loops, Python
-`while` loops, and any command containing the comment `# no-deadline-ok`.
-
-It's a pattern check, not a shell parser. A deadline anywhere in the command counts for every
-loop in it.
+All three suggested forms pass the hook.
 
 ## Install
 
@@ -49,7 +35,25 @@ In Claude Code:
 /plugin install wait-loop-guard@wait-loop-guard
 ```
 
-Start a new session so it loads the hook.
+Then run `/reload-plugins` or start a new session to load the hook.
+
+## What passes
+
+A command with an `until ... do` or `while ... do` loop passes if any of these appear
+anywhere in the command:
+
+| Kind | Examples |
+|---|---|
+| timeout | `timeout 60`, `gtimeout 60`, with options such as `-k 5` or `--signal=KILL` |
+| clock | `SECONDS`, `date +%s` |
+| counter | `((i++))`, `((i+=1))`, `i=$((i+1))`, `let c=c+1` |
+| named limit | `deadline`, `max_tries` (any case), or an upper-case variable starting with `MAX` or `LIMIT`, such as `MAX_WAIT` |
+
+These also pass: `while read ...` loops (they stop when the input ends), `for` loops,
+Python `while` loops, commands without a loop, and any command that contains the comment
+`# no-deadline-ok`.
+
+Loops inside quotes, such as `bash -c 'until [ -f done ]; do sleep 1; done'`, are checked too.
 
 ## Configuration
 
@@ -57,10 +61,18 @@ None.
 
 ## Requirements
 
-`python3` on your `PATH`. Nothing else; `timeout` is only suggested to Claude, not needed by
-the hook.
+`python3` on your `PATH`. The hook uses only the standard library. `timeout` is only
+suggested to Claude; the hook does not need it.
 
-## Test
+## How it works
+
+`hooks/hooks.json` registers a `PreToolUse` hook on the `Bash` tool. The Python script
+finds `until`/`while ... do` loops with a regular expression, skips `while read` loops, and
+looks for any deadline pattern in the whole command. If it finds a loop and no deadline, it
+returns `permissionDecision: "deny"` with the message above. Input it can't parse, and calls
+to other tools, pass through untouched.
+
+To run the tests:
 
 ```
 python3 tests/test_guard.py
@@ -71,6 +83,14 @@ python3 tests/test_guard.py
 ```
 /plugin uninstall wait-loop-guard@wait-loop-guard
 ```
+
+## Limits
+
+- It is a pattern check, not a shell parser. A deadline anywhere in the command counts for
+  every loop in it, so `while true; do sleep 1; done; timeout 5 true` passes.
+- It checks that a counter exists, not that the loop uses it to stop.
+- Tested on macOS in the terminal CLI (Claude Code 2.1.319). The docs say desktop app
+  local sessions load plugins too, but I have not tested it there, or on Linux or Windows.
 
 ## License
 
