@@ -44,6 +44,16 @@ BLOCKED = [
     "while read -r l; do :; done < f; until [ -f x ]; do sleep 1; done",  # read loop + a wait loop
 ]
 
+# Audit findings (0.1.1): each of these passed the 0.1.0 hook.
+BLOCKED_AUDIT = [
+    "until read -r x; do sleep 1; done < /dev/null",          # EOF keeps `until read` going
+    "while read -r x || true; do sleep 1; done < /dev/null",  # `|| true` keeps it going
+    "while read -r line; do until [ -f x ]; do sleep 1; done; done < files",  # nested right after do
+    "while read -r x; do while true; do sleep 1; done; done < input.txt",
+    "! while true; do sleep 1; done",                          # negated loop
+    "bash <<EOF\nuntil [ -f ready ]; do sleep 1; done\nEOF",  # heredoc fed to a shell runs
+]
+
 ALLOWED = [
     "timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'",
     "/usr/bin/timeout 60 bash -c 'while true; do sleep 1; done'",
@@ -60,11 +70,20 @@ ALLOWED = [
     "while read -r line; do echo \"$line\"; done < file.txt",
     "cat list | while IFS= read -r f; do wc -l \"$f\"; done",
     "while IFS=, read -r a b; do echo $a; done < data.csv",
+    "while IFS= read -r l || [ -n \"$l\" ]; do echo \"$l\"; done < f",  # last line without newline
     "until [ -f x ]; do sleep 1; done  # no-deadline-ok",
     "for i in 1 2 3; do echo $i; done",
     "python3 -c 'while True: pass'",
     "git status",
     "",
+]
+
+# Audit findings (0.1.1): each of these was denied by the 0.1.0 hook.
+ALLOWED_AUDIT = [
+    "cat <<EOF\nuntil [ -f ready ]; do sleep 1; done\nEOF",  # heredoc body is only text
+    "cat > notes.md <<'EOF'\n```sh\nwhile true; do sleep 1; done\n```\nEOF\ngit add notes.md",
+    "timeout -s KILL 60 sh -c 'while true; do sleep 1; done'",
+    "timeout --signal KILL 60 sh -c 'until [ -f a ]; do sleep 1; done'",
 ]
 
 
@@ -76,6 +95,16 @@ class Guard(unittest.TestCase):
 
     def test_allowed(self):
         for cmd in ALLOWED:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(denied(cmd), cmd)
+
+    def test_blocked_audit(self):
+        for cmd in BLOCKED_AUDIT:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(denied(cmd), cmd)
+
+    def test_allowed_audit(self):
+        for cmd in ALLOWED_AUDIT:
             with self.subTest(cmd=cmd):
                 self.assertFalse(denied(cmd), cmd)
 
