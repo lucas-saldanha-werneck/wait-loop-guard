@@ -9,7 +9,7 @@
     {
       "name": "wait-loop-guard",
       "source": "./",
-      "description": "Refuses Bash until/while wait loops that have no deadline, so Claude can't hang forever polling."
+      "description": "Blocks Bash wait loops with no deadline, so Claude can't hang forever."
     }
   ]
 }

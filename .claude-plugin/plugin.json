@@ -1,7 +1,7 @@
 {
   "name": "wait-loop-guard",
-  "version": "0.2.0",
-  "description": "Refuses Bash until/while wait loops that have no deadline, so Claude can't hang forever polling.",
+  "version": "0.2.1",
+  "description": "Blocks Bash wait loops with no deadline, so Claude can't hang forever.",
   "author": {
     "name": "Lucas Saldanha Werneck",
     "url": "https://github.com/lucas-saldanha-werneck"

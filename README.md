@@ -31,8 +31,8 @@ All three suggested forms pass the hook.
 In Claude Code:
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/wait-loop-guard
-/plugin install wait-loop-guard@wait-loop-guard
+/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin install wait-loop-guard@lucas-plugins
 ```
 
 Then run `/reload-plugins` or start a new session to load the hook.
@@ -70,7 +70,7 @@ Heredoc bodies are treated as text and skipped, so writing a shell example to a 
 - `$(...)` and backtick parts of an unquoted heredoc (`<<EOF`, not `<<'EOF'`), because the
   shell runs them before the command reads the text.
 
-## Your settings
+## Settings
 
 Your own settings live outside the plugin, in a file that plugin updates never touch:
 
@@ -128,7 +128,7 @@ python3 tests/test_guard.py
 ## Uninstall
 
 ```
-/plugin uninstall wait-loop-guard@wait-loop-guard
+/plugin uninstall wait-loop-guard@lucas-plugins
 ```
 
 ## Limits
