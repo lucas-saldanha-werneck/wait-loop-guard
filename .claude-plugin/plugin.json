@@ -1,6 +1,6 @@
 {
   "name": "wait-loop-guard",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Blocks Bash wait loops with no deadline, so Claude can't hang forever.",
   "author": {
     "name": "Lucas Saldanha Werneck",

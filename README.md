@@ -31,7 +31,7 @@ All three suggested forms pass the hook.
 In Claude Code:
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin marketplace add lucas-saldanha-werneck/lucas-tools
 /plugin install wait-loop-guard@lucas-tools
 ```
 
