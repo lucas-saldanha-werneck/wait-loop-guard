@@ -32,7 +32,7 @@ In Claude Code:
 
 ```
 /plugin marketplace add lucas-saldanha-werneck/claude-plugins
-/plugin install wait-loop-guard@lucas-plugins
+/plugin install wait-loop-guard@lucas-tools
 ```
 
 Then run `/reload-plugins` or start a new session to load the hook.
@@ -128,7 +128,7 @@ python3 tests/test_guard.py
 ## Uninstall
 
 ```
-/plugin uninstall wait-loop-guard@lucas-plugins
+/plugin uninstall wait-loop-guard@lucas-tools
 ```
 
 ## Limits
