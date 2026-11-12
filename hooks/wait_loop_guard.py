@@ -4,11 +4,14 @@
 Why: a loop such as `until [ -s out.log ]; do sleep 2; done` waits forever when
 the file never shows up, and the Bash call (or background task) hangs.
 
-A command passes when it shows some deadline anywhere in it:
+A loop passes when its own condition or body shows some deadline:
   timeout/gtimeout N, SECONDS, date +%s, a counter ((i++)) / ((i+=1)) /
-  i=$((i+1)) / let, or the words deadline / max_tries / MAX* / LIMIT*.
-`while read ...` loops also pass (they end when their input ends), unless an
-`||` keeps the condition true. Heredoc bodies are skipped unless a shell may run
+  i=$((i+1)) / let, a count down ((n--)) / n=$((n-1)) / shift, or the words
+  deadline / max_tries / MAX* / LIMIT*. A `timeout N` in the command that wraps
+  the loop (`timeout 60 sh -c '...loop...'`) counts too.
+`while read ...` loops also pass (they end when their input ends), when `read`
+is the only command of the condition, reads no redirect of its own and no `||`
+keeps the condition true. Heredoc bodies are skipped unless a shell may run
 them; `$(...)` and backticks in an unquoted heredoc are still checked.
 Deliberate escape: put the comment `# no-deadline-ok` in the command.
 
@@ -24,28 +27,35 @@ import re
 import sys
 
 ESCAPE = "no-deadline-ok"
+ESCAPE_COMMENT = re.compile(r"(?:^|\s)#\s*" + re.escape(ESCAPE) + r"(?!\w)")  # only as a comment
 # Copied to your settings path on the first session when no file is there (see seed_config).
 STARTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.example.json")
 
 # Loop keyword. The condition runs up to the first `;` or newline that is
 # followed by `do` (Python "while x:" has no "do"). Only the keyword is matched
 # here, so a loop that starts right after another loop's `do` is still found.
-KEYWORD = re.compile(r"\b(until|while)\s+")
+KEYWORD = re.compile(r"\b(until|while)(?=[\s(])\s*")  # `while((1))` has no blank
 DO_WORD = re.compile(r"\bdo\b")
+DO_DONE = re.compile(r"\b(do|done)\b")
 # What may come right before the keyword. Quotes are separators too, so loops
 # inside `sh -c '...'` are seen; `)` ends a case pattern. `!` negates a loop.
 SEP_CHARS = set(";&|\n({`'\")")
-WORD_BEFORE = re.compile(r"\b(?:then|do|else)$")
+WORD_BEFORE = re.compile(r"\b(?:then|do|else|time|nohup|exec|command)$|\btime\s+-p$")
 MAX_COND = 1000  # a longer "condition" is not inspected, only refused
 
+NAMED = r"(?:\b(?:MAX|LIMIT)\w*|(?i:deadline|max_?tries)\b)"   # MAX_WAIT, LIMIT (upper case)
+TIMEOUT = r"\bg?timeout\s+(?:(?:-[ks]|--kill-after|--signal)\s+\S+\s+|-\S+\s+)*\d"  # timeout [-k 5] [-s KILL] 60
 DEADLINE = re.compile(
-    r"\bg?timeout\s+(?:(?:-[ks]|--kill-after|--signal)\s+\S+\s+|-\S+\s+)*\d"  # timeout [-k 5] [-s KILL] 60
+    TIMEOUT +
     r"|\bSECONDS\b|date\s+\+%s"
-    r"|\(\(\s*\w+\s*(?:\+\+|\+=)"                    # ((i++)) ((i+=1))
-    r"|\w+=\$\(\(\s*\w+\s*\+\s*\d+\s*\)\)"           # i=$((i+1))
+    r"|\(\(\s*\w+\s*(?:\+\+|\+=|--|-=)"              # ((i++)) ((i+=1)) ((n--)) ((n-=1))
+    r"|\(\(\s*(?:\+\+|--)\w+"                         # ((++i)) ((--n))
+    r"|\w+=\$\(\(\s*\w+\s*[+-]\s*\d+\s*\)\)"          # i=$((i+1)) n=$((n-1))
+    r"|\bshift\b"                                     # argument loops: shift until $# is 0
     r"|\blet\s+\w+"
-    r"|(?i:\bdeadline\b|\bmax_?tries\b)"
-    r"|\b(?:MAX|LIMIT)\w*\b",                        # MAX_WAIT, LIMIT ... (upper case)
+    # a named limit used as a variable: $MAX_WAIT, ${deadline}, max_tries=5, (( n < LIMIT ))
+    # (not a bare word, so `psql -c '... LIMIT 1'` or `echo deadline` does not count)
+    r"|\$\{?#?" + NAMED + r"|\b" + NAMED + r"=|\(\([^)]*\b" + NAMED,
 )
 
 # `while read ...` ends at end of input, unless `||` keeps the condition true.
@@ -54,6 +64,9 @@ DEADLINE = re.compile(
 READ_COND = re.compile(r"(?:IFS=\S*\s+)?read\b")
 READ_LAST_LINE = re.compile(r"\|\|\s*\[\[?\s+-n\s+\"?\$\{?(\w+)\}?\"?\s+\]\]?\s*$")
 READ_OPT_WITH_ARG = re.compile(r"-[A-Za-z]*[adinNptu]")  # -d '', -rd '', -p prompt, -u 3 ...
+# In the condition of `while read`, another command (`;`, `&&`, a pipe) can keep it true, and a
+# redirect other than `<&N` (`< file`, `<<< text`, `< <(cmd)`) reopens the input on every turn.
+READ_EXTRA = re.compile(r"[;|\n`]|(?<!<)&|\$\(|<(?!&\d)")
 
 # Heredoc start: <<WORD, <<-WORD, <<'WORD', <<"WORD" (not the here-string <<<).
 HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(['\"]?)(\w+)\2")
@@ -88,16 +101,50 @@ def substitutions_only(text):
     return "".join(out)
 
 
+def heredoc_starts(line, state):
+    """HEREDOC matches in line that are real: not inside quotes or $(( )) arithmetic.
+
+    state = [open quote char or None, arithmetic paren depth], carried from line to line."""
+    plain = set()  # positions outside quotes and arithmetic
+    j, n = 0, len(line)
+    while j < n:
+        c = line[j]
+        q, arith = state
+        if q == "'":
+            if c == "'":
+                state[0] = None
+        elif c == "\\":
+            j += 2
+            continue
+        elif q == '"':
+            if c == '"':
+                state[0] = None
+        elif arith:
+            state[1] += 1 if c == "(" else -1 if c == ")" else 0
+            if state[1] < 0:
+                state[1] = 0
+        elif c in "'\"":
+            state[0] = c
+        elif line.startswith("((", j):
+            state[1] = 2
+            j += 2
+            continue
+        else:
+            plain.add(j)
+        j += 1
+    return [m for m in HEREDOC.finditer(line) if m.start() in plain]
+
+
 def drop_heredoc_text(cmd):
     """Blank out heredoc bodies, which are data, unless a shell may run them."""
-    out, lines, i = [], cmd.split("\n"), 0
+    out, lines, i, state = [], cmd.split("\n"), 0, [None, 0]
     while i < len(lines):
         line = lines[i]
         out.append(line)
         i += 1
-        for m in HEREDOC.finditer(line):
+        for m in heredoc_starts(line, state):
             words = re.split(r"[\s;&|()<>]+", line)
-            runs = any(w.rsplit("/", 1)[-1] in SHELLS for w in words)
+            runs = any(w.strip("'\"").rsplit("/", 1)[-1] in SHELLS for w in words)
             body, end = [], None
             while i < len(lines):
                 b = lines[i]
@@ -106,7 +153,9 @@ def drop_heredoc_text(cmd):
                     end = b
                     break
                 body.append(b)
-            if runs:
+            if runs and re.search(TIMEOUT, line):
+                out.extend("" for _ in body)  # `timeout 60 bash <<EOF`: the whole script has a limit
+            elif runs:
                 out.extend(body)
             elif not m.group(2):  # unquoted: $(...) and `...` inside still run
                 out.extend(substitutions_only("\n".join(body)).split("\n") if body else [])
@@ -128,7 +177,7 @@ def starts_command(code, i):
             j -= 1
     if j == 0 or code[j - 1] in SEP_CHARS:
         return True
-    return bool(WORD_BEFORE.search(code, max(0, j - 5), j))
+    return bool(WORD_BEFORE.search(code, max(0, j - 12), j))
 
 
 def do_separators(code):
@@ -161,27 +210,107 @@ def read_vars(cond):
     return names or ["REPLY"]
 
 
-def find_bad_loops(code):
+def quote_depths(code):
+    """Quote nesting depth of each character. A quote of the other kind inside a quote opens a
+    new level (the text of `sh -c '... "..." ...'` is code again); quote marks get the outer depth."""
+    depths, stack, i, n = [0] * len(code), [], 0, len(code)
+    while i < n:
+        c = code[i]
+        if c == "\\" and (not stack or stack[-1] == '"'):
+            depths[i] = len(stack)
+            if i + 1 < n:
+                depths[i + 1] = len(stack)
+            i += 2
+            continue
+        if stack and c == stack[-1]:
+            stack.pop()
+            depths[i] = len(stack)
+        elif c in "'\"":
+            depths[i] = len(stack)
+            stack.append(c)
+        else:
+            depths[i] = len(stack)
+        i += 1
+    return depths
+
+
+WRAP_SEPS = set(";&|\n(){}`")
+WRAP_BACK = 4000  # how far back a wrapping command is looked for
+
+
+def wrapper_text(code, depths, p):
+    """Text of the commands that wrap the loop at p: the start of its own command, then for each
+    quote it sits in, the command that quote is an argument of (`timeout 60 sh -c '...'`)."""
+    parts, level, end, j, stop = [], depths[p] if p < len(code) else 0, p, p - 1, max(0, p - WRAP_BACK)
+    while j >= stop:
+        d = depths[j]
+        if d < level:                       # the quote that opens the current level
+            parts.append(code[j + 1:end])
+            level, end = d, j
+        elif d == level and code[j] in WRAP_SEPS:
+            parts.append(code[j + 1:end])
+            if level == 0:
+                return " ".join(parts)
+            while j >= stop and depths[j] >= level:   # skip to the quote that opens this level
+                j -= 1
+            if j < stop:
+                break
+            level, end = depths[j], j
+        j -= 1
+    parts.append(code[max(stop, j + 1):end])
+    return " ".join(parts)
+
+
+def loop_end(code, starts, k):
+    """End of the loop whose condition ends at seps position k: just after its matching `done`.
+    starts = (positions, words) of `do`/`done` words that begin a command. End of text if none."""
+    pos, words = starts
+    depth = 0
+    for idx in range(bisect.bisect_left(pos, k), len(pos)):
+        depth += 1 if words[idx] == "do" else -1
+        if depth <= 0:
+            return pos[idx] + 4
+    return len(code)
+
+
+def find_bad_loops(code, extra=()):
+    """Loops with no deadline in their own text or in a command that wraps them (at most 5)."""
     seps = do_separators(code)
+    depths = None
+    starts = None
     bad = []
     for m in KEYWORD.finditer(code):
+        if len(bad) >= 5:
+            break
         if not starts_command(code, m.start()):
             continue
         k = bisect.bisect_left(seps, m.end() + 1)  # the condition has at least one character
         if k == len(seps):
             continue
         kind = m.group(1)
+        if depths is None:
+            depths = quote_depths(code)
+            found = [(d.start(), d.group(1)) for d in DO_DONE.finditer(code) if starts_command(code, d.start())]
+            starts = ([x for x, _ in found], [w for _, w in found])
+        wrap = wrapper_text(code, depths, m.start())
         if seps[k] - m.end() > MAX_COND:
-            bad.append(f"{kind} {code[m.end():m.end() + 60].strip()}")
+            if not has_deadline(wrap, extra):
+                bad.append(f"{kind} {code[m.end():m.end() + 60].strip()}")
             continue
         cond = code[m.end():seps[k]].strip()
         if kind == "while" and READ_COND.match(cond):
             last = READ_LAST_LINE.search(cond)
             rest = cond[:last.start()] if last and last.group(1) in read_vars(cond) else cond
-            if "||" not in rest:
+            if not READ_EXTRA.search(rest):
                 continue  # while read: ends when the input ends
-        bad.append(f"{kind} {cond[:60]}")
+        body = code[m.start():loop_end(code, starts, seps[k])]
+        if not has_deadline(body, extra) and not has_deadline(wrap, extra):
+            bad.append(f"{kind} {cond[:60]}")
     return bad
+
+
+def has_deadline(text, extra=()):
+    return bool(DEADLINE.search(text)) or any(rx.search(text) for rx in extra)
 
 
 def config_path():
@@ -228,14 +357,14 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    if ESCAPE in cmd:
+    if ESCAPE_COMMENT.search(cmd):
         return
     cfg = load_config()
     if any(w.strip() in cmd for w in strings(cfg, "escape_words")):
         return
 
-    bad = find_bad_loops(drop_heredoc_text(cmd))
-    if not bad or DEADLINE.search(cmd) or any(rx.search(cmd) for rx in extra_deadlines(cfg)):
+    bad = find_bad_loops(drop_heredoc_text(cmd), extra_deadlines(cfg))
+    if not bad:
         return
 
     reason = (

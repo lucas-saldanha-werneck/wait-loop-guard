@@ -40,19 +40,23 @@ Then run `/reload-plugins` or start a new session to load the hook.
 ## What passes
 
 A command with an `until ... do` or `while ... do` loop passes if any of these appear
-anywhere in the command:
+in the loop's own condition or body (a `timeout` may also be in the command that wraps the
+loop, as in `timeout 60 sh -c '...'` or `timeout 60 bash <<EOF`):
 
 | Kind | Examples |
 |---|---|
 | timeout | `timeout 60`, `gtimeout 60`, with options such as `-k 5`, `-s KILL` or `--signal=KILL` |
 | clock | `SECONDS`, `date +%s` |
-| counter | `((i++))`, `((i+=1))`, `i=$((i+1))`, `let c=c+1` |
-| named limit | `deadline`, `max_tries` (any case), or an upper-case variable starting with `MAX` or `LIMIT`, such as `MAX_WAIT` |
+| counter | `((i++))`, `((i+=1))`, `i=$((i+1))`, `let c=c+1`, and counting down: `((n--))`, `n=$((n-1))`, `shift` |
+| named limit | a variable named `deadline` or `max_tries` (any case), or an upper-case one starting with `MAX` or `LIMIT`, used as a variable: `$MAX_WAIT`, `${deadline}`, `max_tries=5`, `(( n < LIMIT ))`. The bare word (`psql -c '... LIMIT 1'`) does not count |
 
 These also pass: `while read ...` loops (they stop when the input ends), `for` loops,
 Python `while` loops, commands without a loop, and any command that contains the comment
-`# no-deadline-ok`. A `while read` loop is still checked when `||` keeps its condition
-true, as in `while read -r x || true`, except for the common last-line form
+`# no-deadline-ok` (as a comment, after `#`). A `while read` loop is still checked when
+`read` is not the only command of its condition (`while read -r x; true`), when the condition
+has its own redirect (`while read -r x < file`, `<<< text`, `< <(cmd)` reopen the input on
+every turn; `<&3` is fine), or when `||` keeps its condition true, as in
+`while read -r x || true`, except for the common last-line form
 `while read -r x || [ -n "$x" ]`, and only when `$x` is a variable that the same `read`
 fills. `until read` loops are always checked, because at the
 end of the input they never stop.
@@ -115,7 +119,7 @@ suggested to Claude; the hook does not need it.
 that only creates your settings file when it is missing. The Python script
 blanks out heredoc bodies that don't feed a shell, finds `until`/`while ... do` loops in
 one pass over the command (fast enough for very long commands), skips `while read` loops, and
-looks for any deadline pattern in the whole command. If it finds a loop and no deadline, it
+looks for a deadline pattern in each loop and in the commands that wrap it. If it finds a loop and no deadline, it
 returns `permissionDecision: "deny"` with the message above. Input it can't parse, and calls
 to other tools, pass through untouched.
 
@@ -133,8 +137,9 @@ python3 tests/test_guard.py
 
 ## Limits
 
-- It is a pattern check, not a shell parser. A deadline anywhere in the command counts for
-  every loop in it, so `while true; do sleep 1; done; timeout 5 true` passes.
+- It is a pattern check, not a shell parser. The end of a loop is found by matching `do` and
+  `done` words, and quotes are followed only roughly, so odd quoting can make it look at too much
+  or too little text.
 - It checks that a counter exists, not that the loop uses it to stop.
 - A heredoc line that names a shell for another reason, such as `cat <<EOF > x; bash x`,
   has its body checked too.
