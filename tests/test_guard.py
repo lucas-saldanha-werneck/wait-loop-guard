@@ -75,15 +75,14 @@ ALLOWED = [
     "timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'",
     "/usr/bin/timeout 60 bash -c 'while true; do sleep 1; done'",
     "gtimeout 30 sh -c 'until [ -f x ]; do sleep 1; done'",
-    "timeout -k 5 60 sh -c 'x'; until [ -f a ]; do sleep 1; done",
     "timeout --signal=KILL 60 sh -c 'until [ -f a ]; do sleep 1; done'",
     "i=0; until [ -s out.log ]; do i=$((i+1)); [ $i -gt 60 ] && break; sleep 2; done",
     "n=0; while true; do ((n++)); [ $n -ge 10 ] && break; sleep 1; done",
     "c=0; while true; do let c=c+1; [ $c -ge 10 ] && break; done",
     "end=$((SECONDS+120)); until [ -s out.log ] || [ $SECONDS -ge $end ]; do sleep 2; done",
     "start=$(date +%s); while [ $(( $(date +%s) - start )) -lt 60 ]; do sleep 1; done",
-    "MAX_WAIT=30; until [ -f x ]; do sleep 1; done",
-    "deadline=60; until [ -f x ]; do sleep 1; done",
+    "MAX_WAIT=30; until [ -f x ]; do sleep 1; [ $SECONDS -gt $MAX_WAIT ] && break; done",
+    "n=0; until [ -f x ] || [ $n -ge $max_tries ]; do sleep 1; done",
     "while read -r line; do echo \"$line\"; done < file.txt",
     "cat list | while IFS= read -r f; do wc -l \"$f\"; done",
     "while IFS=, read -r a b; do echo $a; done < data.csv",
@@ -111,6 +110,62 @@ ALLOWED_REVIEW2 = [
     "while read -r a b || [ -n \"$b\" ]; do echo $a; done < f",
     "while read || [ -n \"$REPLY\" ]; do echo \"$REPLY\"; done < f",
     "case $1 in start) echo go ;; esac",
+]
+
+# Audit round 3 (0.2.4): each of these passed the 0.2.3 hook.
+BLOCKED_AUDIT3 = [
+    # WLG-01: a deadline word outside the loop no longer frees it
+    "echo 'deadline soon'; until [ -f x ]; do sleep 1; done",
+    "until psql -c 'select 1 LIMIT 1'; do sleep 1; done; echo MAX",
+    "timeout 5 true; while true; do sleep 1; done",
+    "while true; do sleep 1; done; timeout 5 true",
+    "sh -c 'timeout 5 foo; while true; do sleep 1; done'",
+    "MAX_WAIT=30; until [ -f x ]; do sleep 1; done",          # named but never used by the loop
+    "timeout 60 cat log | while true; do sleep 1; done",
+    # WLG-02: read must be the only command of the condition
+    "while read -r x; true; do sleep 1; done < f",
+    "while read -r x && true; do sleep 1; done < f",
+    # WLG-03: <<WORD inside quotes is not a heredoc
+    "echo 'see <<EOF'\nwhile true; do sleep 1; done",
+    # WLG-04: a quoted shell name still runs the heredoc
+    '"bash" <<EOF\nwhile true; do sleep 1; done\nEOF',
+    "'/bin/sh' <<'EOF'\nuntil false; do sleep 1; done\nEOF",
+    # WLG-05: no blank after the keyword
+    "while((1)); do sleep 1; done",
+    "until(false); do sleep 1; done",
+    # WLG-06: a redirect in the condition reopens the input on every turn
+    "while read -r x < file; do sleep 1; done",
+    "while read -r x <<< \"$s\"; do sleep 1; done",
+    "while read -r x < <(ls); do sleep 1; done",
+    # WLG-07: arithmetic shift is not a heredoc
+    "x=$((1<<4))\nwhile true; do sleep 1; done",
+    "((x = 1<<4))\nwhile true; do sleep 1; done",
+    # WLG-08: the escape word only counts as a comment
+    "curl -o /tmp/no-deadline-ok.txt x; until [ -f x ]; do sleep 1; done",
+    # WLG-10: prefixes before the keyword
+    "time while true; do sleep 1; done",
+    "time -p until false; do sleep 1; done",
+]
+
+ALLOWED_AUDIT3 = [
+    # WLG-01: deadlines inside the loop or in a command that wraps it still count
+    "timeout -k 5 60 sh -c 'until [ -f a ]; do sleep 1; done'",
+    "bash -c \"timeout 5 sh -c 'until [ -f a ]; do sleep 1; done'\"",
+    "timeout 60 bash -c '(while true; do sleep 1; done)'",
+    "MAX_WAIT=30; n=0; until [ -f x ] || [ $n -ge $MAX_WAIT ]; do n=$((n+1)); sleep 1; done",
+    "deadline=$((SECONDS+60)); until [ -f x ] || [ $SECONDS -ge $deadline ]; do sleep 1; done",
+    "while read -r x <&3; do echo $x; done 3< f",                # fd duplicate, opened once
+    "echo do; i=0; until [ -f x ]; do echo done; i=$((i+1)); [ $i -gt 9 ] && break; done",
+    # WLG-11: loops that count down or shift end on their own
+    "while [ $# -gt 0 ]; do case $1 in -v) v=1 ;; esac; shift; done",
+    "n=10; while [ $n -gt 0 ]; do n=$((n-1)); done",
+    "n=10; while (( n-- > 0 )); do echo $n; done",
+    "n=10; until [ $n -eq 0 ]; do ((--n)); done",
+    # WLG-07 / WLG-03: still fine
+    "echo $((1<<4)); echo hi",
+    "time sleep 1",
+    "timeout 60 bash <<EOF\nwhile true; do sleep 1; done\nEOF",   # the shell running the heredoc has a limit
+    "until [ -f x ]; do sleep 1; done # no-deadline-ok",
 ]
 
 
@@ -145,6 +200,16 @@ class Guard(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(denied(cmd), cmd)
 
+    def test_blocked_audit3(self):
+        for cmd in BLOCKED_AUDIT3:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(denied(cmd), cmd)
+
+    def test_allowed_audit3(self):
+        for cmd in ALLOWED_AUDIT3:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(denied(cmd), cmd)
+
     def test_large_text_finishes_fast(self):
         # Review finding: 120 KB of repeated loop keywords took over 6 s, past the 5 s hook timeout.
         for cmd in ["echo " + "while x " * 15000,
@@ -174,6 +239,11 @@ class Guard(unittest.TestCase):
 
 
 LOOP = "until [ -s out.log ]; do sleep 2; done"
+
+
+def loop_using(word):
+    """A wait loop whose condition reads the variable `word`."""
+    return "until [ -s out.log ] || [ $n -ge ${%s} ]; do sleep 2; done" % word
 
 
 def run_with(cfg, cmd, env_var=False):
@@ -206,15 +276,16 @@ class TestSettings(unittest.TestCase):
 
     def test_deadline_words_whole_word_any_case(self):
         cfg = {"deadline_words": ["prazo"]}
-        self.assertIsNone(run_with(cfg, "PRAZO=60; " + LOOP))
-        self.assertIsNone(run_with(cfg, "prazo=60; " + LOOP))
-        self.assertIsNotNone(run_with(cfg, "aprazovel=1; " + LOOP))
-        self.assertIsNotNone(run_with({}, "prazo=60; " + LOOP))
+        self.assertIsNone(run_with(cfg, loop_using("PRAZO")))
+        self.assertIsNone(run_with(cfg, loop_using("prazo")))
+        self.assertIsNotNone(run_with(cfg, loop_using("aprazovel")))
+        self.assertIsNotNone(run_with({}, loop_using("prazo")))
+        self.assertIsNotNone(run_with(cfg, "prazo=60; " + LOOP))  # only inside the loop (WLG-01)
 
     def test_deadline_patterns(self):
         cfg = {"deadline_patterns": [r"\bLIMITE\w*\b", "(unclosed"]}  # a bad regex is skipped
-        self.assertIsNone(run_with(cfg, "LIMITE_SEG=60; " + LOOP))
-        self.assertIsNotNone(run_with(cfg, "limite_seg=60; " + LOOP))  # patterns keep their case
+        self.assertIsNone(run_with(cfg, loop_using("LIMITE_SEG")))
+        self.assertIsNotNone(run_with(cfg, loop_using("limite_seg")))  # patterns keep their case
 
     def test_tip_appended(self):
         reason = run_with({"tip": "Use /usr/bin/timeout, not gtimeout."}, LOOP)
@@ -264,7 +335,8 @@ class TestSettings(unittest.TestCase):
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STARTER = os.path.join(ROOT, "config.example.json")
-EVERY_CMD = BLOCKED + BLOCKED_AUDIT + BLOCKED_REVIEW2 + ALLOWED + ALLOWED_AUDIT + ALLOWED_REVIEW2
+EVERY_CMD = (BLOCKED + BLOCKED_AUDIT + BLOCKED_REVIEW2 + BLOCKED_AUDIT3
+             + ALLOWED + ALLOWED_AUDIT + ALLOWED_REVIEW2 + ALLOWED_AUDIT3)
 
 
 def clean_env(xdg=None, env_var=None):
@@ -365,7 +437,7 @@ class TestSeed(unittest.TestCase):
         seeded = clean_env(xdg=tempfile.mkdtemp())
         seed(seeded)
         self.assertTrue(os.path.isfile(os.path.join(seeded["XDG_CONFIG_HOME"], "wait-loop-guard", "config.json")))
-        for cmd in EVERY_CMD + [LOOP + "  # sem-prazo-ok", "prazo=60; " + LOOP, "LIMITE=1; " + LOOP]:
+        for cmd in EVERY_CMD + [LOOP + "  # sem-prazo-ok", loop_using("prazo"), loop_using("LIMITE")]:
             with self.subTest(cmd=cmd):
                 self.assertEqual(decide(seeded, cmd), decide(none, cmd))
 
@@ -381,6 +453,21 @@ class TestSeed(unittest.TestCase):
             hooks = json.load(f)["hooks"]
         args = [h["args"] for g in hooks["SessionStart"] for h in g["hooks"]]
         self.assertIn(["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/wait_loop_guard.py", "--seed"], args)
+
+    def test_exact_hooks_json_command_runs(self):
+        # WLG-09: run the hook the way Claude Code does (same program name, same args), so a
+        # missing `python3` on some OS fails here instead of silently turning the guard off.
+        import shutil
+        with open(os.path.join(ROOT, "hooks", "hooks.json"), encoding="utf-8") as f:
+            hooks = json.load(f)["hooks"]
+        for h in (h for g in hooks["PreToolUse"] for h in g["hooks"]):
+            exe = shutil.which(h["command"])
+            self.assertIsNotNone(exe, f"{h['command']!r} from hooks.json is not on PATH")
+            args = [a.replace("${CLAUDE_PLUGIN_ROOT}", os.path.abspath(ROOT)) for a in h["args"]]
+            r = subprocess.run([exe] + args, input=json.dumps(bash(LOOP)), capture_output=True,
+                               text=True, timeout=30, env=clean_env(xdg=tempfile.mkdtemp()))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('"deny"', r.stdout)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
