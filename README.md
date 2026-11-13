@@ -1,5 +1,9 @@
 # wait-loop-guard
 
+[![CI](https://github.com/lucas-saldanha-werneck/wait-loop-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/wait-loop-guard/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/lucas-saldanha-werneck/wait-loop-guard)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.2.5-blue)](CHANGELOG.md)
+
 A Claude Code hook that refuses Bash `until`/`while` wait loops with no deadline, so a
 Bash call can't hang forever waiting for something that never happens.
 
@@ -159,3 +163,7 @@ python3 tests/test_guard.py
 MIT. See [LICENSE](LICENSE).
 
 Built with Claude Code
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for what this plugin accesses and how to report a vulnerability.
