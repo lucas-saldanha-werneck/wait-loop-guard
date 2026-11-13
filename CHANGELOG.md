@@ -12,15 +12,15 @@ All notable changes to this plugin. Versions follow `.claude-plugin/plugin.json`
 
 ## 0.2.3 (2026-11-11)
 
-- Maintenance: point to the catalog repo's new name, lucas-tools.
+- Point to the catalog repo's new name, `lucas-tools`.
 
 ## 0.2.2 (2026-11-11)
 
-- Maintenance: rename the marketplace to lucas-tools.
+- Catalog renamed to `lucas-tools`.
 
 ## 0.2.1 (2026-11-09)
 
-- Docs: one-line description, catalog install, heading names.
+- One-line description, catalog install steps, heading names.
 
 ## 0.2.0 (2026-11-08)
 
