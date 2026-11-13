@@ -3,6 +3,7 @@
 [![CI](https://github.com/lucas-saldanha-werneck/wait-loop-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/wait-loop-guard/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/wait-loop-guard)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.2.5-blue)](CHANGELOG.md)
+[![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-97.5%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 A Claude Code hook that refuses Bash `until`/`while` wait loops with no deadline, so a
 Bash call can't hang forever waiting for something that never happens.
