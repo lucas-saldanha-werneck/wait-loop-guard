@@ -26,6 +26,12 @@ Also check the exit code of the step you are waiting on before waiting for its r
 
 All three suggested forms pass the hook.
 
+## Examples
+
+- `until [ -s out.log ]; do sleep 2; done` is refused, and Claude gets the three ways to add a limit (see above).
+- `timeout 120 sh -c 'until [ -s out.log ]; do sleep 2; done'` passes, because it has a deadline.
+- `until [ -f done ]; do sleep 1; done  # no-deadline-ok` passes, because of the opt-out comment, for a loop that really ends on its own.
+
 ## Install
 
 In Claude Code:

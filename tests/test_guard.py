@@ -303,7 +303,7 @@ class TestSettings(unittest.TestCase):
 
     def test_file_saved_with_a_bom_is_read(self):
         # Windows editors (Notepad before 2019, PowerShell 5 Out-File) put a BOM at the start.
-        self.assertIsNone(run_with("﻿" + json.dumps({"escape_words": ["# mine"]}), LOOP + " # mine"))
+        self.assertIsNone(run_with("\ufeff" + json.dumps({"escape_words": ["# mine"]}), LOOP + " # mine"))
 
     def test_escape_words_are_trimmed_like_deadline_words(self):
         self.assertIsNone(run_with({"escape_words": ["# mine "]}, LOOP + "  # mine"))
