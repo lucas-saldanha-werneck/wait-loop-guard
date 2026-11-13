@@ -7,6 +7,16 @@
 A Claude Code hook that refuses Bash `until`/`while` wait loops with no deadline, so a
 Bash call can't hang forever waiting for something that never happens.
 
+[![wait-loop-guard demo: tap to open the video](https://github.com/user-attachments/assets/566a1c5c-8e4e-4aeb-802a-ebfb1d3f9e5f)](https://lucas-saldanha-werneck.github.io/wait-loop-guard/demo.mp4)
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/user-attachments/assets/a6178cad-c8dc-4130-8e6b-aa8355f25444" alt="The hook blocks a wait loop with no deadline" width="320"><br>The hook blocks a wait loop with no deadline</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/5e0448fc-5458-4ab9-bf79-66e6a56eb28f" alt="Claude checks the step it waits on first" width="320"><br>Claude checks the step it waits on first</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/092a953f-bd7e-408d-a3a4-8b7697ce72f2" alt="Waits that always end" width="320"><br>Waits that always end</td>
+</tr>
+</table>
+
 Claude often waits like this:
 
 ```sh
